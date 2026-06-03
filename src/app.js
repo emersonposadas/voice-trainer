@@ -22,6 +22,8 @@ const state = {
   recording: false,
   practicing: false,
   recordedFrames: [],
+  recordingSegments: [],
+  activeRecordingSegment: null,
   melody: [
     { note: 'D4', duration: 0.5, result: '-' },
     { note: 'E4', duration: 0.5, result: '-' },
@@ -106,7 +108,7 @@ async function ensureAudio() {
   state.audioContext = new AudioContext();
   const source = state.audioContext.createMediaStreamSource(state.stream);
   state.analyser = state.audioContext.createAnalyser();
-  state.analyser.fftSize = 2048;
+  state.analyser.fftSize = 4096;
   source.connect(state.analyser);
   $('micStatus').textContent = 'Micrófono activo';
 }
@@ -151,37 +153,91 @@ function updateLivePitch() {
   $('liveNote').textContent = note || '--';
 
   if (state.recording) {
-    const detected = frequencyToNote(freq);
-    state.recordedFrames.push({ time: performance.now(), note: detected, freq });
+    collectRecordingFrame(freq);
   }
 
   if (state.practicing) updatePractice(freq);
   state.raf = requestAnimationFrame(updateLivePitch);
 }
 
-function processRecording() {
-  const frames = state.recordedFrames.filter(f => f.note);
-  if (!frames.length) return;
-  const segments = [];
-  let current = { note: frames[0].note, start: frames[0].time, end: frames[0].time };
-  for (const frame of frames.slice(1)) {
-    if (frame.note === current.note || frame.time - current.end < 120) {
-      current.end = frame.time;
-      if (frame.note !== current.note) current.note = mostCommonNote(framesBetween(frames, current.start, current.end));
-    } else {
-      segments.push(current);
-      current = { note: frame.note, start: frame.time, end: frame.time };
-    }
-  }
-  segments.push(current);
+function collectRecordingFrame(freq) {
+  const now = performance.now();
+  const detected = frequencyToNote(freq);
+  state.recordedFrames.push({ time: now, note: detected, freq });
 
+  const maxSilentGap = 280;
+  if (!detected) {
+    if (state.activeRecordingSegment) {
+      const gap = now - state.activeRecordingSegment.lastSeen;
+      if (gap <= maxSilentGap) {
+        state.activeRecordingSegment.end = now;
+      } else {
+        finishActiveRecordingSegment();
+      }
+    }
+    return;
+  }
+
+  if (!state.activeRecordingSegment) {
+    state.activeRecordingSegment = { note: detected, start: now, end: now, lastSeen: now };
+    return;
+  }
+
+  if (state.activeRecordingSegment.note === detected) {
+    state.activeRecordingSegment.end = now;
+    state.activeRecordingSegment.lastSeen = now;
+    return;
+  }
+
+  const previousDuration = state.activeRecordingSegment.end - state.activeRecordingSegment.start;
+  if (previousDuration < 120) {
+    state.activeRecordingSegment.note = detected;
+    state.activeRecordingSegment.end = now;
+    state.activeRecordingSegment.lastSeen = now;
+    return;
+  }
+
+  finishActiveRecordingSegment();
+  state.activeRecordingSegment = { note: detected, start: now, end: now, lastSeen: now };
+}
+
+function finishActiveRecordingSegment() {
+  if (!state.activeRecordingSegment) return;
+  const durationMs = state.activeRecordingSegment.end - state.activeRecordingSegment.start;
+  if (durationMs >= 120) {
+    state.recordingSegments.push({ ...state.activeRecordingSegment });
+  }
+  state.activeRecordingSegment = null;
+}
+
+function processRecording() {
+  finishActiveRecordingSegment();
+
+  const segments = mergeShortGaps(state.recordingSegments);
   state.melody = segments
-    .map(s => ({ note: s.note, duration: Math.max(0.1, (s.end - s.start) / 1000), result: '-' }))
-    .filter(s => s.duration >= 0.12)
+    .map(s => ({ note: s.note, duration: Math.max(0.15, (s.end - s.start) / 1000), result: '-' }))
+    .filter(s => s.duration >= 0.15)
     .map(s => ({ ...s, duration: Number(s.duration.toFixed(2)) }));
 
-  if (!state.melody.length) alert('No se detectaron notas suficientemente estables. Intenta cantar más cerca del micrófono.');
+  if (!state.melody.length) {
+    alert('No se detectaron notas suficientemente estables. Intenta cantar más cerca del micrófono o subir un poco el volumen.');
+  }
   renderMelody();
+}
+
+function mergeShortGaps(segments) {
+  if (!segments.length) return [];
+  const merged = [];
+  for (const segment of segments) {
+    const last = merged[merged.length - 1];
+    if (last && last.note === segment.note && segment.start - last.end <= 300) {
+      last.end = segment.end;
+      last.lastSeen = segment.lastSeen;
+    } else {
+      merged.push({ ...segment });
+    }
+  }
+  return merged;
 }
 
 function framesBetween(frames, start, end) {
@@ -271,21 +327,32 @@ function updatePractice(freq) {
 
 async function playMelody(type) {
   const ctx = new AudioContext();
-  let when = ctx.currentTime + 0.1;
+  let when = ctx.currentTime + 0.12;
   const mode = $('voiceMode').value;
+
   state.melody.forEach(item => {
     const note = type === 'harmony' ? getRelativeVoice(item.note, mode) : item.note;
+    if (!note) return;
+
+    const duration = Math.max(0.15, Number(item.duration) || 0.15);
+    const attack = Math.min(0.04, duration * 0.2);
+    const release = Math.min(0.08, duration * 0.3);
+    const sustainEnd = Math.max(when + attack + 0.02, when + duration - release);
+
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.value = midiToFrequency(noteToMidi(note));
-    gain.gain.setValueAtTime(0.0001, when);
-    gain.gain.exponentialRampToValueAtTime(0.18, when + 0.03);
-    gain.gain.exponentialRampToValueAtTime(0.0001, when + item.duration - 0.03);
+    osc.frequency.setValueAtTime(midiToFrequency(noteToMidi(note)), when);
+
+    gain.gain.setValueAtTime(0, when);
+    gain.gain.linearRampToValueAtTime(0.2, when + attack);
+    gain.gain.setValueAtTime(0.2, sustainEnd);
+    gain.gain.linearRampToValueAtTime(0, when + duration);
+
     osc.connect(gain).connect(ctx.destination);
     osc.start(when);
-    osc.stop(when + item.duration);
-    when += item.duration;
+    osc.stop(when + duration + 0.03);
+    when += duration;
   });
 }
 
@@ -348,6 +415,8 @@ function bindEvents() {
   $('startRecording').addEventListener('click', async () => {
     await ensureAudio();
     state.recordedFrames = [];
+    state.recordingSegments = [];
+    state.activeRecordingSegment = null;
     state.recording = true;
     $('startRecording').disabled = true;
     $('stopRecording').disabled = false;
