@@ -68,3 +68,8 @@ https://TU-USUARIO.github.io/norteno-voice-trainer/
 ## Nota técnica
 
 La detección de pitch usa autocorrelación simple. Es suficiente para una primera versión funcional, pero puede mejorarse después con una librería especializada como Pitchy o YIN.
+
+## Corrección 2026-06-03
+
+- La grabación ahora acumula segmentos sostenidos por duración real, incluso si hay pequeños huecos de detección.
+- La reproducción sintetizada usa una envolvente suave para evitar golpes/clics y sostener la nota durante su duración.
