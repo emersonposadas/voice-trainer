@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Norteño Voice Trainer</title>
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Entrenador de segunda voz</p>
+        <h1>Norteño Voice Trainer</h1>
+        <p class="subtitle">Graba o tararea la melodía principal, genera la segunda voz aguda/grave con tu regla, y practica afinación en tiempo real.</p>
+      </div>
+      <div class="status-card">
+        <span id="micStatus" class="pill">Micrófono no iniciado</span>
+        <strong id="liveNote">--</strong>
+        <small id="liveFreq">-- Hz</small>
+      </div>
+    </header>
+
+    <section class="panel grid-2">
+      <div>
+        <h2>1. Canción</h2>
+        <label>Nombre de canción
+          <input id="songTitle" type="text" value="Ejercicio norteño" />
+        </label>
+        <label>Modo de segunda voz
+          <select id="voiceMode">
+            <option value="low">Grave</option>
+            <option value="high">Aguda</option>
+          </select>
+        </label>
+        <label>Redondeo de melodía principal
+          <select id="quantizeMode">
+            <option value="natural">Solo notas naturales</option>
+            <option value="chromatic">Permitir sostenidos</option>
+          </select>
+        </label>
+      </div>
+      <div>
+        <h2>2. Grabar melodía</h2>
+        <p class="help">Canta o tararea la melodía principal en un entorno silencioso. Al detener, la app agrupa notas, elimina fragmentos cortos y genera la segunda voz.</p>
+        <div class="button-row">
+          <button id="startRecording">Iniciar grabación</button>
+          <button id="stopRecording" disabled>Detener y procesar</button>
+          <button id="clearMelody" class="secondary">Limpiar</button>
+        </div>
+        <div class="meter">
+          <div id="volumeBar"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>3. Línea de tiempo</h2>
+      <div class="button-row wrap">
+        <button id="playLead">Reproducir primera voz</button>
+        <button id="playHarmony">Reproducir segunda voz</button>
+        <button id="startPractice">Practicar segunda voz</button>
+        <button id="stopPractice" disabled>Detener práctica</button>
+        <button id="addNote" class="secondary">Agregar nota</button>
+        <button id="saveSong" class="secondary">Guardar</button>
+        <button id="loadSong" class="secondary">Cargar</button>
+        <button id="exportSong" class="secondary">Exportar JSON</button>
+        <label class="import-label secondary">Importar JSON<input id="importSong" type="file" accept="application/json" /></label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Primera voz</th>
+              <th>Duración</th>
+              <th>Segunda generada</th>
+              <th>Resultado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="melodyTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel practice-panel">
+      <h2>4. Afinación en práctica</h2>
+      <div class="practice-grid">
+        <div>
+          <span class="label">Objetivo actual</span>
+          <strong id="targetNote">--</strong>
+          <small id="targetFreq">-- Hz</small>
+        </div>
+        <div>
+          <span class="label">Tu voz</span>
+          <strong id="practiceNote">--</strong>
+          <small id="practiceFreq">-- Hz</small>
+        </div>
+        <div>
+          <span class="label">Diferencia</span>
+          <strong id="centsDiff">--</strong>
+          <small id="tuningStatus">--</small>
+        </div>
+      </div>
+      <div class="tuner">
+        <div class="tuner-scale">
+          <span>-50c</span><span>-25c</span><span>0</span><span>+25c</span><span>+50c</span>
+        </div>
+        <div class="tuner-track"><div id="tunerNeedle"></div></div>
+      </div>
+    </section>
+  </main>
+  <script src="src/app.js"></script>
+</body>
+</html>
