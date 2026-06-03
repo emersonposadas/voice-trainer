@@ -73,3 +73,10 @@ La detección de pitch usa autocorrelación simple. Es suficiente para una prime
 
 - La grabación ahora acumula segmentos sostenidos por duración real, incluso si hay pequeños huecos de detección.
 - La reproducción sintetizada usa una envolvente suave para evitar golpes/clics y sostener la nota durante su duración.
+
+
+## Corrección visual y de audio (2026-06-03, actualización posterior)
+
+- La referencia reproducida ahora usa un sintetizador más claro y estable para que sirva mejor como guía vocal.
+- Se añadió una línea de tiempo visual tipo gráfico: amarillo = segunda voz, azul = melodía principal, blanco = tu voz.
+- Durante la práctica aparece un cursor vertical para seguir mejor el avance de la frase.
