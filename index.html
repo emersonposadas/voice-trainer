@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">Entrenador de segunda voz</p>
         <h1>Norteño Voice Trainer</h1>
-        <p class="subtitle">Graba o tararea la melodía principal, genera la segunda voz aguda/grave con tu regla, y practica afinación en tiempo real.</p>
+        <p class="subtitle">Graba o tararea la melodía principal, genera la segunda voz aguda o grave con tu regla norteña, y practica siguiendo una referencia visual dibujada.</p>
       </div>
       <div class="status-card">
         <span id="micStatus" class="pill">Micrófono no iniciado</span>
@@ -42,7 +42,7 @@
       </div>
       <div>
         <h2>2. Grabar melodía</h2>
-        <p class="help">Canta o tararea la melodía principal en un entorno silencioso. Al detener, la app agrupa notas, elimina fragmentos cortos y genera la segunda voz.</p>
+        <p class="help">Canta o tararea la melodía principal en un entorno silencioso. Al detener, la app agrupa notas, limpia cambios demasiado breves y genera la segunda voz.</p>
         <div class="button-row">
           <button id="startRecording">Iniciar grabación</button>
           <button id="stopRecording" disabled>Detener y procesar</button>
@@ -55,7 +55,7 @@
     </section>
 
     <section class="panel">
-      <h2>3. Línea de tiempo</h2>
+      <h2>3. Línea de tiempo y práctica</h2>
       <div class="button-row wrap">
         <button id="playLead">Reproducir primera voz</button>
         <button id="playHarmony">Reproducir segunda voz</button>
@@ -67,6 +67,25 @@
         <button id="exportSong" class="secondary">Exportar JSON</button>
         <label class="import-label secondary">Importar JSON<input id="importSong" type="file" accept="application/json" /></label>
       </div>
+
+      <div class="chart-shell">
+        <div class="chart-header">
+          <div>
+            <h3>Guía visual</h3>
+            <p>Amarillo = segunda voz objetivo, azul = melodía principal, blanco = tu voz.</p>
+          </div>
+          <div class="chart-legend">
+            <span><i class="legend-target"></i> Segunda voz</span>
+            <span><i class="legend-lead"></i> Primera voz</span>
+            <span><i class="legend-live"></i> Tu voz</span>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <svg id="timelineSvg" viewBox="0 0 960 340" preserveAspectRatio="none" aria-label="Línea de tiempo melódica"></svg>
+          <div id="chartEmpty" class="chart-empty">Graba una melodía o agrega notas para ver la referencia.</div>
+        </div>
+      </div>
+
       <div class="table-wrap">
         <table>
           <thead>
