@@ -21,7 +21,7 @@
       </div>
     </header>
 
-    <section class="panel grid-2">
+    <section class="panel grid-2 setup-panel">
       <div>
         <h2>1. Canción</h2>
         <label>Nombre de canción
@@ -36,7 +36,7 @@
       </div>
       <div>
         <h2>2. Grabar melodía</h2>
-        <p class="help">Canta o tararea la melodía principal en un entorno silencioso. Al detener, la app agrupa notas, limpia cambios demasiado breves y genera la segunda voz.</p>
+        <p class="help">Canta o tararea la melodía principal. Al detener, la app genera la segunda voz y muestra la guía.</p>
         <div class="button-row">
           <button id="startRecording">Iniciar grabación</button>
           <button id="stopRecording" disabled>Detener y procesar</button>
@@ -57,7 +57,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section id="visualGuide" class="panel visual-panel">
       <h2>3. Guía visual</h2>
       <div class="chart-shell primary-chart">
         <div class="chart-header">

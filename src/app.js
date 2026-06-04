@@ -206,11 +206,61 @@ async function ensureAudio() {
 
   const source = state.audioContext.createMediaStreamSource(state.stream);
   state.analyser = state.audioContext.createAnalyser();
-  state.analyser.fftSize = 4096;
+  state.analyser.fftSize = 2048;
   source.connect(state.analyser);
   $('micStatus').textContent = 'Micrófono activo';
   await refreshMicDevices();
   setMicHint('Micrófono activo. Canta o tararea: la barra de volumen debe moverse.', 'ok');
+}
+
+function detectPitchYin(buffer, sampleRate) {
+  const minFrequency = 70;
+  const maxFrequency = 1000;
+  const threshold = 0.12;
+  const minTau = Math.floor(sampleRate / maxFrequency);
+  const maxTau = Math.min(Math.floor(sampleRate / minFrequency), buffer.length - 1);
+  const yin = new Float32Array(maxTau + 1);
+
+  let mean = 0;
+  for (const sample of buffer) mean += sample;
+  mean /= buffer.length;
+
+  for (let tau = 1; tau <= maxTau; tau++) {
+    let sum = 0;
+    for (let i = 0; i < buffer.length - tau; i++) {
+      const delta = (buffer[i] - mean) - (buffer[i + tau] - mean);
+      sum += delta * delta;
+    }
+    yin[tau] = sum;
+  }
+
+  yin[0] = 1;
+  let runningSum = 0;
+  for (let tau = 1; tau <= maxTau; tau++) {
+    runningSum += yin[tau];
+    yin[tau] = runningSum ? (yin[tau] * tau) / runningSum : 1;
+  }
+
+  let tauEstimate = -1;
+  for (let tau = minTau; tau <= maxTau; tau++) {
+    if (yin[tau] < threshold) {
+      while (tau + 1 <= maxTau && yin[tau + 1] < yin[tau]) tau++;
+      tauEstimate = tau;
+      break;
+    }
+  }
+
+  if (tauEstimate < 0) return null;
+
+  const prev = yin[tauEstimate - 1] ?? yin[tauEstimate];
+  const current = yin[tauEstimate];
+  const next = yin[tauEstimate + 1] ?? yin[tauEstimate];
+  const divisor = (2 * current) - prev - next;
+  const refinedTau = divisor ? tauEstimate + ((next - prev) / (2 * divisor)) : tauEstimate;
+  const confidence = 1 - current;
+
+  if (!Number.isFinite(refinedTau) || confidence < 0.82) return null;
+  return sampleRate / refinedTau;
 }
 
 function detectPitch(analyser, audioContext) {
@@ -223,26 +273,8 @@ function detectPitch(analyser, audioContext) {
   $('volumeBar').style.width = `${Math.min(100, rms * 700)}%`;
   if (rms < 0.015) return { freq: null, rms };
 
-  const sampleRate = audioContext.sampleRate;
-  let bestOffset = -1;
-  let bestCorrelation = 0;
-  const minOffset = Math.floor(sampleRate / 1000);
-  const maxOffset = Math.floor(sampleRate / 70);
-
-  for (let offset = minOffset; offset <= maxOffset; offset++) {
-    let correlation = 0;
-    for (let i = 0; i < buffer.length - offset; i++) {
-      correlation += buffer[i] * buffer[i + offset];
-    }
-    correlation /= buffer.length - offset;
-    if (correlation > bestCorrelation) {
-      bestCorrelation = correlation;
-      bestOffset = offset;
-    }
-  }
-
-  if (bestCorrelation < 0.003 || bestOffset <= 0) return { freq: null, rms };
-  return { freq: sampleRate / bestOffset, rms };
+  const freq = detectPitchYin(buffer, audioContext.sampleRate);
+  return { freq, rms };
 }
 
 function updateLivePitch() {
@@ -337,6 +369,7 @@ function processRecording() {
     alert('No se detectaron notas suficientemente estables. Intenta cantar más cerca del micrófono o subir un poco el volumen.');
   }
   renderMelody();
+  if (state.melody.length) $('visualGuide').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function noteOptions(selected) {
@@ -481,7 +514,7 @@ function animatePlaybackVisualization() {
 
 function createVoiceTone(ctx, destination, frequency, start, duration) {
   const release = Math.min(0.22, duration * 0.4);
-  const attack = Math.min(0.08, Math.max(0.025, duration * 0.2));
+  const attack = Math.min(0.09, Math.max(0.035, duration * 0.22));
   const decayEnd = start + Math.min(duration * 0.5, attack + 0.18);
   const stopAt = start + duration + release + 0.04;
 
@@ -496,8 +529,9 @@ function createVoiceTone(ctx, destination, frequency, start, duration) {
 
   toneGain.gain.value = 0.72;
   breathGain.gain.setValueAtTime(0.0001, start);
-  breathGain.gain.linearRampToValueAtTime(0.018, start + attack);
-  breathGain.gain.linearRampToValueAtTime(0.01, decayEnd);
+  breathGain.gain.setValueAtTime(0.0001, start + attack);
+  breathGain.gain.linearRampToValueAtTime(0.005, start + attack + 0.04);
+  breathGain.gain.linearRampToValueAtTime(0.003, decayEnd);
   breathGain.gain.exponentialRampToValueAtTime(0.0001, start + duration + release);
 
   formantA.type = 'bandpass';
@@ -531,6 +565,7 @@ function createVoiceTone(ctx, destination, frequency, start, duration) {
   compressor.connect(destination);
 
   noteGain.gain.setValueAtTime(0.0001, start);
+  noteGain.gain.linearRampToValueAtTime(0.002, start + 0.008);
   noteGain.gain.linearRampToValueAtTime(0.26, start + attack);
   noteGain.gain.linearRampToValueAtTime(0.18, decayEnd);
   noteGain.gain.setValueAtTime(0.18, start + duration);
@@ -568,14 +603,14 @@ function createVoiceTone(ctx, destination, frequency, start, duration) {
   const noiseSize = Math.max(1, Math.floor(ctx.sampleRate * Math.min(duration + release, 2.5)));
   const noiseBuffer = ctx.createBuffer(1, noiseSize, ctx.sampleRate);
   const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseSize; i++) noiseData[i] = (Math.random() * 2 - 1) * 0.35;
+  for (let i = 0; i < noiseSize; i++) noiseData[i] = (Math.random() * 2 - 1) * 0.08;
   const noise = ctx.createBufferSource();
   const breathFilter = ctx.createBiquadFilter();
   breathFilter.type = 'highpass';
   breathFilter.frequency.setValueAtTime(1600, start);
   noise.buffer = noiseBuffer;
   noise.connect(breathFilter).connect(breathGain);
-  noise.start(start);
+  noise.start(start + attack);
   noise.stop(stopAt);
 
   vibratoOsc.start(start);
