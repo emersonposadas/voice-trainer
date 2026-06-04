@@ -68,7 +68,7 @@ https://TU-USUARIO.github.io/voice-trainer/
 
 ## Nota técnica
 
-La detección de pitch usa un detector YIN local sobre Web Audio. Para una versión más avanzada puede evaluarse una librería como Pitchy, aubio.js o Essentia.js.
+La detección de pitch usa un detector local inspirado en McLeod Pitch Method sobre Web Audio. Para una versión más avanzada puede evaluarse una librería como Pitchy, aubio.js o Essentia.js.
 
 ## Corrección 2026-06-03
 

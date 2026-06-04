@@ -35,6 +35,7 @@ const state = {
   practiceStart: 0,
   practiceTrace: [],
   currentPracticeIndex: -1,
+  pitchBuffer: [],
   raf: null,
   playback: { active: false, start: 0, duration: 0, type: null },
   playbackRaf: null
@@ -213,54 +214,81 @@ async function ensureAudio() {
   setMicHint('Micrófono activo. Canta o tararea: la barra de volumen debe moverse.', 'ok');
 }
 
-function detectPitchYin(buffer, sampleRate) {
+function median(values) {
+  const sorted = values.filter(Number.isFinite).slice().sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function smoothPitch(freq) {
+  if (!freq) {
+    state.pitchBuffer = [];
+    return null;
+  }
+  state.pitchBuffer.push(freq);
+  if (state.pitchBuffer.length > 5) state.pitchBuffer.shift();
+  const midis = state.pitchBuffer.map(frequencyToMidi);
+  const medianMidi = median(midis);
+  if (medianMidi === null) return freq;
+  const nearby = state.pitchBuffer.filter(f => Math.abs(frequencyToMidi(f) - medianMidi) <= 1);
+  return median(nearby) || freq;
+}
+
+function parabolicPeak(values, index) {
+  const left = values[index - 1] ?? values[index];
+  const center = values[index];
+  const right = values[index + 1] ?? values[index];
+  const denominator = left - (2 * center) + right;
+  if (!denominator) return index;
+  return index + ((left - right) / (2 * denominator));
+}
+
+function detectPitchMpm(buffer, sampleRate) {
   const minFrequency = 70;
   const maxFrequency = 1000;
-  const threshold = 0.12;
-  const minTau = Math.floor(sampleRate / maxFrequency);
-  const maxTau = Math.min(Math.floor(sampleRate / minFrequency), buffer.length - 1);
-  const yin = new Float32Array(maxTau + 1);
+  const cutoff = 0.9;
+  const minPeriod = Math.floor(sampleRate / maxFrequency);
+  const maxPeriod = Math.min(Math.floor(sampleRate / minFrequency), Math.floor(buffer.length / 2));
+  const nsdf = new Float32Array(maxPeriod + 1);
 
   let mean = 0;
   for (const sample of buffer) mean += sample;
   mean /= buffer.length;
 
-  for (let tau = 1; tau <= maxTau; tau++) {
-    let sum = 0;
+  for (let tau = 0; tau <= maxPeriod; tau++) {
+    let acf = 0;
+    let divisor = 0;
     for (let i = 0; i < buffer.length - tau; i++) {
-      const delta = (buffer[i] - mean) - (buffer[i + tau] - mean);
-      sum += delta * delta;
+      const a = buffer[i] - mean;
+      const b = buffer[i + tau] - mean;
+      acf += a * b;
+      divisor += (a * a) + (b * b);
     }
-    yin[tau] = sum;
+    nsdf[tau] = divisor ? (2 * acf) / divisor : 0;
   }
 
-  yin[0] = 1;
-  let runningSum = 0;
-  for (let tau = 1; tau <= maxTau; tau++) {
-    runningSum += yin[tau];
-    yin[tau] = runningSum ? (yin[tau] * tau) / runningSum : 1;
-  }
+  let bestPeriod = -1;
+  let bestValue = 0;
+  let searchingPeak = false;
 
-  let tauEstimate = -1;
-  for (let tau = minTau; tau <= maxTau; tau++) {
-    if (yin[tau] < threshold) {
-      while (tau + 1 <= maxTau && yin[tau + 1] < yin[tau]) tau++;
-      tauEstimate = tau;
-      break;
+  for (let tau = minPeriod; tau <= maxPeriod; tau++) {
+    if (nsdf[tau] > 0 && nsdf[tau - 1] <= 0) searchingPeak = true;
+    if (!searchingPeak) continue;
+
+    const isPeak = nsdf[tau] > nsdf[tau - 1] && nsdf[tau] >= (nsdf[tau + 1] ?? -1);
+    if (isPeak && nsdf[tau] > bestValue) {
+      bestValue = nsdf[tau];
+      bestPeriod = tau;
+      if (bestValue >= cutoff) break;
     }
+
+    if (nsdf[tau] <= 0) searchingPeak = false;
   }
 
-  if (tauEstimate < 0) return null;
-
-  const prev = yin[tauEstimate - 1] ?? yin[tauEstimate];
-  const current = yin[tauEstimate];
-  const next = yin[tauEstimate + 1] ?? yin[tauEstimate];
-  const divisor = (2 * current) - prev - next;
-  const refinedTau = divisor ? tauEstimate + ((next - prev) / (2 * divisor)) : tauEstimate;
-  const confidence = 1 - current;
-
-  if (!Number.isFinite(refinedTau) || confidence < 0.82) return null;
-  return sampleRate / refinedTau;
+  if (bestPeriod < 0 || bestValue < 0.78) return null;
+  const refinedPeriod = parabolicPeak(nsdf, bestPeriod);
+  if (!Number.isFinite(refinedPeriod) || refinedPeriod <= 0) return null;
+  return sampleRate / refinedPeriod;
 }
 
 function detectPitch(analyser, audioContext) {
@@ -273,8 +301,8 @@ function detectPitch(analyser, audioContext) {
   $('volumeBar').style.width = `${Math.min(100, rms * 700)}%`;
   if (rms < 0.015) return { freq: null, rms };
 
-  const freq = detectPitchYin(buffer, audioContext.sampleRate);
-  return { freq, rms };
+  const freq = detectPitchMpm(buffer, audioContext.sampleRate);
+  return { freq: smoothPitch(freq), rms };
 }
 
 function updateLivePitch() {
@@ -313,13 +341,14 @@ function collectRecordingFrame(freq) {
   }
 
   if (!state.activeRecordingSegment) {
-    state.activeRecordingSegment = { note: detected, start: now, end: now, lastSeen: now };
+    state.activeRecordingSegment = { note: detected, start: now, end: now, lastSeen: now, freqs: [freq] };
     return;
   }
 
   if (state.activeRecordingSegment.note === detected) {
     state.activeRecordingSegment.end = now;
     state.activeRecordingSegment.lastSeen = now;
+    if (freq) state.activeRecordingSegment.freqs.push(freq);
     return;
   }
 
@@ -328,17 +357,22 @@ function collectRecordingFrame(freq) {
     state.activeRecordingSegment.note = detected;
     state.activeRecordingSegment.end = now;
     state.activeRecordingSegment.lastSeen = now;
+    if (freq) state.activeRecordingSegment.freqs.push(freq);
     return;
   }
 
   finishActiveRecordingSegment();
-  state.activeRecordingSegment = { note: detected, start: now, end: now, lastSeen: now };
+  state.activeRecordingSegment = { note: detected, start: now, end: now, lastSeen: now, freqs: [freq] };
 }
 
 function finishActiveRecordingSegment() {
   if (!state.activeRecordingSegment) return;
   const durationMs = state.activeRecordingSegment.end - state.activeRecordingSegment.start;
-  if (durationMs >= 120) state.recordingSegments.push({ ...state.activeRecordingSegment });
+  if (durationMs >= 120) {
+    const freq = median(state.activeRecordingSegment.freqs || []);
+    const note = frequencyToNote(freq) || state.activeRecordingSegment.note;
+    state.recordingSegments.push({ ...state.activeRecordingSegment, note });
+  }
   state.activeRecordingSegment = null;
 }
 
@@ -513,77 +547,35 @@ function animatePlaybackVisualization() {
 }
 
 function createVoiceTone(ctx, destination, frequency, start, duration) {
-  const release = Math.min(0.22, duration * 0.4);
-  const attack = Math.min(0.09, Math.max(0.035, duration * 0.22));
-  const decayEnd = start + Math.min(duration * 0.5, attack + 0.18);
-  const stopAt = start + duration + release + 0.04;
+  const attack = Math.min(0.06, Math.max(0.025, duration * 0.18));
+  const release = Math.min(0.14, duration * 0.35);
+  const stopAt = start + duration + release + 0.03;
 
   const noteGain = ctx.createGain();
-  const toneGain = ctx.createGain();
-  const breathGain = ctx.createGain();
-  const formantA = ctx.createBiquadFilter();
-  const formantE = ctx.createBiquadFilter();
-  const formantNasal = ctx.createBiquadFilter();
-  const warmth = ctx.createBiquadFilter();
-  const compressor = ctx.createDynamicsCompressor();
+  const lowpass = ctx.createBiquadFilter();
 
-  toneGain.gain.value = 0.72;
-  breathGain.gain.setValueAtTime(0.0001, start);
-  breathGain.gain.setValueAtTime(0.0001, start + attack);
-  breathGain.gain.linearRampToValueAtTime(0.005, start + attack + 0.04);
-  breathGain.gain.linearRampToValueAtTime(0.003, decayEnd);
-  breathGain.gain.exponentialRampToValueAtTime(0.0001, start + duration + release);
+  lowpass.type = 'lowpass';
+  lowpass.frequency.setValueAtTime(1800, start);
+  lowpass.Q.value = 0.4;
+  noteGain.connect(lowpass).connect(destination);
 
-  formantA.type = 'bandpass';
-  formantA.frequency.setValueAtTime(780, start);
-  formantA.Q.value = 4.8;
-  formantE.type = 'bandpass';
-  formantE.frequency.setValueAtTime(1180, start);
-  formantE.Q.value = 6.2;
-  formantNasal.type = 'bandpass';
-  formantNasal.frequency.setValueAtTime(2450, start);
-  formantNasal.Q.value = 7.5;
-  warmth.type = 'lowpass';
-  warmth.frequency.setValueAtTime(3400, start);
-  warmth.Q.value = 0.65;
-
-  compressor.threshold.value = -24;
-  compressor.knee.value = 18;
-  compressor.ratio.value = 2.4;
-  compressor.attack.value = 0.006;
-  compressor.release.value = 0.18;
-
-  noteGain.connect(toneGain);
-  toneGain.connect(formantA);
-  toneGain.connect(formantE);
-  toneGain.connect(formantNasal);
-  formantA.connect(warmth);
-  formantE.connect(warmth);
-  formantNasal.connect(warmth);
-  breathGain.connect(warmth);
-  warmth.connect(compressor);
-  compressor.connect(destination);
-
-  noteGain.gain.setValueAtTime(0.0001, start);
-  noteGain.gain.linearRampToValueAtTime(0.002, start + 0.008);
-  noteGain.gain.linearRampToValueAtTime(0.26, start + attack);
-  noteGain.gain.linearRampToValueAtTime(0.18, decayEnd);
-  noteGain.gain.setValueAtTime(0.18, start + duration);
-  noteGain.gain.exponentialRampToValueAtTime(0.0001, start + duration + release);
+  noteGain.gain.setValueAtTime(0, start);
+  noteGain.gain.linearRampToValueAtTime(0.18, start + attack);
+  noteGain.gain.setValueAtTime(0.18, Math.max(start + attack, start + duration - release));
+  noteGain.gain.linearRampToValueAtTime(0, start + duration + release);
 
   const vibratoOsc = ctx.createOscillator();
   const vibratoGain = ctx.createGain();
   vibratoOsc.type = 'sine';
-  vibratoOsc.frequency.setValueAtTime(5.1, start);
+  vibratoOsc.frequency.setValueAtTime(4.8, start);
   vibratoGain.gain.setValueAtTime(0, start);
-  vibratoGain.gain.linearRampToValueAtTime(3.5, start + Math.min(0.35, duration * 0.55));
+  vibratoGain.gain.linearRampToValueAtTime(1.8, start + Math.min(0.3, duration * 0.5));
   vibratoOsc.connect(vibratoGain);
 
   const voices = [
-    { type: 'sawtooth', gain: 0.075, detune: -3, ratio: 1 },
-    { type: 'triangle', gain: 0.14, detune: 0, ratio: 1 },
-    { type: 'sine', gain: 0.05, detune: 4, ratio: 1 },
-    { type: 'sine', gain: 0.018, detune: 0, ratio: 2 }
+    { type: 'sine', gain: 0.18, detune: 0, ratio: 1 },
+    { type: 'triangle', gain: 0.055, detune: -2, ratio: 1 },
+    { type: 'sine', gain: 0.02, detune: 0, ratio: 2 }
   ];
 
   const oscillators = voices.map(spec => {
@@ -600,22 +592,9 @@ function createVoiceTone(ctx, destination, frequency, start, duration) {
     return osc;
   });
 
-  const noiseSize = Math.max(1, Math.floor(ctx.sampleRate * Math.min(duration + release, 2.5)));
-  const noiseBuffer = ctx.createBuffer(1, noiseSize, ctx.sampleRate);
-  const noiseData = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < noiseSize; i++) noiseData[i] = (Math.random() * 2 - 1) * 0.08;
-  const noise = ctx.createBufferSource();
-  const breathFilter = ctx.createBiquadFilter();
-  breathFilter.type = 'highpass';
-  breathFilter.frequency.setValueAtTime(1600, start);
-  noise.buffer = noiseBuffer;
-  noise.connect(breathFilter).connect(breathGain);
-  noise.start(start + attack);
-  noise.stop(stopAt);
-
   vibratoOsc.start(start);
   vibratoOsc.stop(stopAt);
-  return { oscillators, vibratoOsc, noise };
+  return { oscillators, vibratoOsc };
 }
 
 async function playMelody(type) {
@@ -676,6 +655,7 @@ async function startPractice() {
   try {
     $('startPractice').disabled = true;
     await ensureAudio();
+    state.pitchBuffer = [];
     resetPracticeReadout();
     state.practicing = true;
     state.practiceStart = performance.now();
@@ -684,6 +664,8 @@ async function startPractice() {
     state.melody.forEach(m => m.result = '-');
     $('stopPractice').disabled = false;
     if (!state.raf) updateLivePitch();
+    updatePractice(null);
+    document.querySelector('.practice-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
     renderMelody();
   } catch (error) {
     console.error(error);
@@ -905,6 +887,7 @@ function bindEvents() {
     try {
       $('startRecording').disabled = true;
       await ensureAudio();
+      state.pitchBuffer = [];
       state.recordedFrames = [];
       state.recordingSegments = [];
       state.activeRecordingSegment = null;
