@@ -5,6 +5,7 @@ const noteToSemitone = {
 const semitoneToNote = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const naturalNotes = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
 const solfege = { C: 'DO', 'C#': 'DO#', D: 'RE', 'D#': 'RE#', E: 'MI', F: 'FA', 'F#': 'FA#', G: 'SOL', 'G#': 'SOL#', A: 'LA', 'A#': 'LA#', B: 'SI' };
+const songStorageKey = 'voiceTrainerSong';
 const voiceRules = {
   C: { high: 'E', low: 'G#' },
   D: { high: 'F#', low: 'A#' },
@@ -584,12 +585,29 @@ function createVoiceTone(ctx, destination, frequency, start, duration) {
 
 async function playMelody(type) {
   if (!state.melody.length) return;
-  const ctx = new AudioContext();
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  const ctx = new AudioContextClass();
   if (ctx.state === 'suspended') await ctx.resume();
 
   const master = ctx.createGain();
   master.gain.value = 0.92;
   master.connect(ctx.destination);
+  const createBus = (gainValue, panValue = 0) => {
+    const gain = ctx.createGain();
+    gain.gain.value = gainValue;
+    if (ctx.createStereoPanner) {
+      const pan = ctx.createStereoPanner();
+      pan.pan.value = panValue;
+      gain.connect(pan).connect(master);
+    } else {
+      gain.connect(master);
+    }
+    return gain;
+  };
+
+  const leadBus = createBus(type === 'both' ? 0.54 : 0.88, type === 'both' ? -0.18 : 0);
+  const harmonyBus = createBus(type === 'both' ? 0.78 : 0.88, type === 'both' ? 0.18 : 0);
 
   let when = ctx.currentTime + 0.08;
   const mode = $('voiceMode').value;
@@ -597,11 +615,18 @@ async function playMelody(type) {
   beginPlaybackVisualization(type);
 
   state.melody.forEach(item => {
-    const note = type === 'harmony' ? getRelativeVoice(item.note, mode) : item.note;
-    if (!note) return;
     const duration = Math.max(0.15, Number(item.duration) || 0.15);
-    const frequency = midiToFrequency(noteToMidi(note));
-    createVoiceTone(ctx, master, frequency, when, duration);
+    const leadNote = item.note;
+    const harmonyNote = getRelativeVoice(item.note, mode);
+
+    if ((type === 'lead' || type === 'both') && leadNote) {
+      createVoiceTone(ctx, leadBus, midiToFrequency(noteToMidi(leadNote)), when, duration);
+    }
+
+    if ((type === 'harmony' || type === 'both') && harmonyNote) {
+      createVoiceTone(ctx, harmonyBus, midiToFrequency(noteToMidi(harmonyNote)), when, duration);
+    }
+
     when += duration;
   });
 
@@ -645,12 +670,12 @@ function stopPractice() {
 }
 
 function saveSong() {
-  localStorage.setItem('nortenoVoiceTrainerSong', JSON.stringify(getSongData()));
+  localStorage.setItem(songStorageKey, JSON.stringify(getSongData()));
   alert('Canción guardada en este navegador.');
 }
 
 function loadSong() {
-  const raw = localStorage.getItem('nortenoVoiceTrainerSong');
+  const raw = localStorage.getItem(songStorageKey);
   if (!raw) return alert('No hay una canción guardada en este navegador.');
   setSongData(JSON.parse(raw));
 }
@@ -664,7 +689,7 @@ function getSongData() {
 }
 
 function setSongData(data) {
-  $('songTitle').value = data.title || 'Ejercicio norteño';
+  $('songTitle').value = data.title || 'Ejercicio de voz';
   $('voiceMode').value = data.voiceMode || 'low';
   state.melody = Array.isArray(data.melody) ? data.melody.map(m => ({ ...m, result: '-' })) : [];
   state.practiceTrace = [];
@@ -750,8 +775,11 @@ function renderTimelineChart() {
   empty.style.display = 'none';
 
   const width = 960;
-  const height = 340;
-  const pad = { left: 64, right: 16, top: 18, bottom: 28 };
+  const compactChart = window.matchMedia('(max-width: 520px)').matches;
+  const height = compactChart ? 300 : 340;
+  const pad = compactChart
+    ? { left: 50, right: 10, top: 18, bottom: 22 }
+    : { left: 64, right: 16, top: 18, bottom: 28 };
   const chartWidth = width - pad.left - pad.right;
   const chartHeight = height - pad.top - pad.bottom;
   const mode = $('voiceMode').value;
@@ -802,6 +830,14 @@ function renderTimelineChart() {
   const currentIndex = state.currentPracticeIndex >= 0 ? state.currentPracticeIndex : 0;
   const currentTarget = melody[currentIndex] ? getRelativeVoice(melody[currentIndex].note, mode) : harmonyNotes[0];
   const chipText = currentTarget ? `Referencia: ${displayNote(currentTarget)}` : `Referencia: ${targetStart}`;
+  const chartNotes = compactChart ? '' : `
+    <rect x="${width - 220}" y="16" rx="12" ry="12" width="190" height="30" class="chart-note-chip" />
+    <text x="${width - 205}" y="36" class="chart-note-text">${escapeHtml(chipText)}</text>
+    <text x="${pad.left}" y="18" class="chart-note-text">Principal: ${escapeHtml(leadStart)}</text>
+    <text x="${pad.left + 150}" y="18" class="chart-note-text">Segunda: ${escapeHtml(targetStart)}</text>
+  `;
+
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
 
   svg.innerHTML = `
     <defs>
@@ -816,10 +852,7 @@ function renderTimelineChart() {
     ${harmonyPath ? `<path d="${harmonyPath}" class="chart-target" />` : ''}
     ${livePath ? `<path d="${livePath}" class="chart-live" />` : ''}
     ${playheadMarkup}
-    <rect x="${width - 220}" y="16" rx="12" ry="12" width="190" height="30" class="chart-note-chip" />
-    <text x="${width - 205}" y="36" class="chart-note-text">${escapeHtml(chipText)}</text>
-    <text x="${pad.left}" y="18" class="chart-note-text">Principal: ${escapeHtml(leadStart)}</text>
-    <text x="${pad.left + 150}" y="18" class="chart-note-text">Segunda: ${escapeHtml(targetStart)}</text>
+    ${chartNotes}
   `;
 }
 
@@ -868,6 +901,7 @@ function bindEvents() {
 
   $('playLead').addEventListener('click', () => playMelody('lead'));
   $('playHarmony').addEventListener('click', () => playMelody('harmony'));
+  $('playBoth').addEventListener('click', () => playMelody('both'));
   $('startPractice').addEventListener('click', startPractice);
   $('stopPractice').addEventListener('click', stopPractice);
   $('saveSong').addEventListener('click', saveSong);

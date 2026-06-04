@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Norteño Voice Trainer</title>
+  <title>Voice Trainer</title>
   <link rel="stylesheet" href="src/styles.css" />
 </head>
 <body>
   <main class="app">
     <header class="hero">
       <div>
-        <p class="eyebrow">Entrenador de segunda voz</p>
-        <h1>Norteño Voice Trainer</h1>
+        <p class="eyebrow">Entrenador de voz</p>
+        <h1>Voice Trainer</h1>
         <p class="subtitle">Graba la primera voz, escucha la segunda y practícala con guía visual.</p>
       </div>
       <div class="status-card">
@@ -25,7 +25,7 @@
       <div>
         <h2>1. Canción</h2>
         <label>Nombre de canción
-          <input id="songTitle" type="text" value="Ejercicio norteño" />
+          <input id="songTitle" type="text" value="Ejercicio de voz" />
         </label>
         <label>Modo de segunda voz
           <select id="voiceMode">
@@ -58,25 +58,10 @@
     </section>
 
     <section class="panel">
-      <h2>3. Línea de tiempo y práctica</h2>
-      <div class="button-row wrap">
-        <button id="playLead">Reproducir primera voz</button>
-        <button id="playHarmony">Reproducir segunda voz</button>
-        <button id="startPractice">Practicar segunda voz</button>
-        <button id="stopPractice" disabled>Detener práctica</button>
-        <button id="addNote" class="secondary">Agregar nota</button>
-        <button id="saveSong" class="secondary">Guardar</button>
-        <button id="loadSong" class="secondary">Cargar</button>
-        <button id="exportSong" class="secondary">Exportar JSON</button>
-        <label class="import-label secondary">Importar JSON<input id="importSong" type="file" accept="application/json" /></label>
-      </div>
-
-      <div class="chart-shell">
+      <h2>3. Guía visual</h2>
+      <div class="chart-shell primary-chart">
         <div class="chart-header">
-          <div>
-            <h3>Guía visual</h3>
-            <p>Amarillo = segunda voz objetivo, azul = melodía principal, blanco = tu voz.</p>
-          </div>
+          <h3>Línea de tiempo</h3>
           <div class="chart-legend">
             <span><i class="legend-target"></i> Segunda voz</span>
             <span><i class="legend-lead"></i> Primera voz</span>
@@ -86,6 +71,37 @@
         <div class="chart-wrap">
           <svg id="timelineSvg" viewBox="0 0 960 340" preserveAspectRatio="none" aria-label="Línea de tiempo melódica"></svg>
           <div id="chartEmpty" class="chart-empty">Graba una melodía o agrega notas para ver la referencia.</div>
+        </div>
+      </div>
+
+      <div class="control-bar" aria-label="Controles de línea de tiempo y práctica">
+        <div class="control-group">
+          <span class="control-label">Escuchar</span>
+          <div class="segmented">
+            <button id="playLead" class="control-button" title="Reproducir primera voz">Primera</button>
+            <button id="playHarmony" class="control-button" title="Reproducir segunda voz">Segunda</button>
+            <button id="playBoth" class="control-button emphasis" title="Reproducir ambas voces">Ambas</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <span class="control-label">Practicar</span>
+          <div class="segmented">
+            <button id="startPractice" class="control-button emphasis">Iniciar</button>
+            <button id="stopPractice" class="control-button" disabled>Detener</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <span class="control-label">Editar</span>
+          <button id="addNote" class="control-button secondary">Agregar nota</button>
+        </div>
+        <div class="control-group file-group">
+          <span class="control-label">Archivo</span>
+          <div class="compact-actions">
+            <button id="saveSong" class="control-button secondary">Guardar</button>
+            <button id="loadSong" class="control-button secondary">Cargar</button>
+            <button id="exportSong" class="control-button secondary">Exportar</button>
+            <label class="import-label control-button secondary">Importar<input id="importSong" type="file" accept="application/json" /></label>
+          </div>
         </div>
       </div>
 
