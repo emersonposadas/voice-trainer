@@ -32,7 +32,7 @@ body {
 .hero { display: flex; justify-content: space-between; gap: 24px; align-items: stretch; margin-bottom: 24px; }
 .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: .12em; font-size: 12px; margin: 0 0 8px; }
 h1 { margin: 0; font-size: clamp(36px, 7vw, 72px); line-height: .95; }
-.subtitle { max-width: 740px; color: var(--muted); font-size: 18px; line-height: 1.55; }
+.subtitle { max-width: 560px; color: var(--muted); font-size: 17px; line-height: 1.45; margin-bottom: 0; }
 .status-card {
   min-width: 220px;
   background: linear-gradient(145deg, rgba(24, 18, 54, .92), rgba(34, 26, 70, .92));
@@ -79,6 +79,23 @@ input, select {
   font-size: 15px;
 }
 .help { color: var(--muted); line-height: 1.5; margin-top: 0; }
+.mic-hint {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.mic-hint.error { color: var(--bad); }
+.mic-hint.ok { color: var(--good); }
+.mic-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-top: 14px;
+}
+.mic-tools label { margin-bottom: 0; }
+.mic-tools button { min-height: 43px; }
 .button-row { display: flex; gap: 10px; align-items: center; }
 .wrap { flex-wrap: wrap; }
 button, .import-label {
@@ -185,25 +202,54 @@ td input, td select { padding: 8px; min-width: 84px; }
 }
 .practice-grid strong { display: block; font-size: 32px; margin: 4px 0; }
 .practice-grid small { color: var(--muted); }
+.practice-cue {
+  margin: -4px 0 16px;
+  color: var(--text);
+  background: rgba(243, 196, 39, .10);
+  border: 1px solid rgba(243, 196, 39, .24);
+  border-radius: 12px;
+  padding: 11px 12px;
+  line-height: 1.45;
+}
 .tuner { margin-top: 24px; }
+.tuner-help {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.tuner-help span:last-child { text-align: right; }
+.tuner-help .center { text-align: center; color: var(--good); font-weight: 700; }
 .tuner-scale { display: grid; grid-template-columns: repeat(5, 1fr); color: var(--muted); font-size: 12px; margin-bottom: 8px; text-align: center; }
 .tuner-track {
   position: relative;
-  height: 16px;
+  height: 20px;
   border-radius: 999px;
   background: linear-gradient(90deg, #652535, #7a5f22, #1e6b49, #7a5f22, #652535);
   border: 1px solid var(--border);
 }
+.tuner-center {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  left: 50%;
+  width: 2px;
+  background: rgba(255,255,255,.46);
+  transform: translateX(-50%);
+}
 #tunerNeedle {
   position: absolute;
-  top: -8px;
+  top: -10px;
   left: 50%;
-  width: 4px;
-  height: 32px;
+  width: 6px;
+  height: 40px;
   background: #fff;
   border-radius: 999px;
   transform: translateX(-50%);
   transition: left .08s linear;
+  box-shadow: 0 0 14px rgba(255,255,255,.35);
 }
 
 .chart-grid-major { stroke: rgba(122, 120, 198, 0.40); stroke-width: 1; }

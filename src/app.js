@@ -68,7 +68,7 @@ function centsOff(freq, targetFreq) {
   return 1200 * Math.log2(freq / targetFreq);
 }
 
-function frequencyToNote(freq, quantizeMode = $('quantizeMode').value) {
+function frequencyToNote(freq, quantizeMode = 'chromatic') {
   if (!freq || freq < 50 || freq > 1200) return null;
   let midi = frequencyToMidi(freq);
   if (quantizeMode === 'natural') midi = nearestNaturalMidi(midi);
@@ -117,17 +117,99 @@ function totalDuration() {
   return state.melody.reduce((sum, item) => sum + Math.max(0.1, Number(item.duration) || 0), 0);
 }
 
-async function ensureAudio() {
-  if (state.audioContext && state.analyser) return;
-  state.stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
+function setMicHint(message, type = '') {
+  const hint = $('micHint');
+  hint.textContent = message;
+  hint.classList.toggle('error', type === 'error');
+  hint.classList.toggle('ok', type === 'ok');
+}
+
+function describeMicError(error) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return 'Este navegador no expone el micrófono aquí. Abre la app en Chrome/Edge/Firefox usando http://localhost:8000.';
+  }
+  if (!window.isSecureContext) {
+    return 'El micrófono solo funciona en localhost o HTTPS. Abre http://localhost:8000 en este mismo equipo.';
+  }
+  if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') {
+    return 'El navegador bloqueó el micrófono. Actívalo en el icono de permisos de la barra de direcciones y vuelve a intentar.';
+  }
+  if (error?.name === 'NotFoundError' || error?.name === 'DevicesNotFoundError') {
+    return 'No encontré un micrófono disponible. Revisa que esté conectado y seleccionado en el sistema.';
+  }
+  if (error?.name === 'NotReadableError' || error?.name === 'TrackStartError') {
+    return 'El micrófono está ocupado por otra app o el sistema no lo dejó iniciar. Cierra otras apps de audio y prueba otra vez.';
+  }
+  return `No pude iniciar el micrófono: ${error?.message || error?.name || 'error desconocido'}.`;
+}
+
+async function refreshMicDevices() {
+  const select = $('micDevice');
+  const selected = select.value;
+  select.innerHTML = '<option value="">Dispositivo predeterminado</option>';
+
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    setMicHint('Este navegador no permite listar micrófonos aquí.', 'error');
+    return [];
+  }
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const inputs = devices.filter(device => device.kind === 'audioinput');
+
+  inputs.forEach((device, index) => {
+    const option = document.createElement('option');
+    option.value = device.deviceId;
+    option.textContent = device.label || `Micrófono ${index + 1}`;
+    option.selected = device.deviceId === selected;
+    select.appendChild(option);
   });
-  state.audioContext = new AudioContext();
+
+  if (!inputs.length) {
+    setMicHint('El navegador no ve micrófonos. Revisa permisos del sistema o conecta uno y pulsa Actualizar.', 'error');
+  } else {
+    setMicHint(`Micrófonos detectados: ${inputs.length}. Elige uno o usa el predeterminado.`, 'ok');
+  }
+
+  return inputs;
+}
+
+async function ensureAudio() {
+  if (state.audioContext && state.audioContext.state === 'suspended') {
+    await state.audioContext.resume();
+  }
+  if (state.audioContext && state.analyser) return;
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('getUserMedia no disponible');
+  }
+
+  $('micStatus').textContent = 'Pidiendo micrófono...';
+  setMicHint('Esperando permiso del navegador para usar el micrófono.');
+
+  const deviceId = $('micDevice').value;
+  state.stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: 1,
+      ...(deviceId ? { deviceId: { exact: deviceId } } : {})
+    }
+  });
+
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error('AudioContext no disponible');
+
+  state.audioContext = new AudioContextClass();
+  if (state.audioContext.state === 'suspended') await state.audioContext.resume();
+
   const source = state.audioContext.createMediaStreamSource(state.stream);
   state.analyser = state.audioContext.createAnalyser();
   state.analyser.fftSize = 4096;
   source.connect(state.analyser);
   $('micStatus').textContent = 'Micrófono activo';
+  await refreshMicDevices();
+  setMicHint('Micrófono activo. Canta o tararea: la barra de volumen debe moverse.', 'ok');
 }
 
 function detectPitch(analyser, audioContext) {
@@ -256,9 +338,9 @@ function processRecording() {
   renderMelody();
 }
 
-function naturalNoteOptions(selected) {
+function noteOptions(selected) {
   const octaves = [2, 3, 4, 5, 6];
-  return octaves.flatMap(o => naturalNotes.map(n => `${n}${o}`))
+  return octaves.flatMap(o => semitoneToNote.map(n => `${n}${o}`))
     .map(n => `<option value="${n}" ${n === selected ? 'selected' : ''}>${displayNote(n)}</option>`).join('');
 }
 
@@ -281,7 +363,7 @@ function renderMelody() {
     const harmony = getRelativeVoice(item.note, mode) || 'Sin regla';
     tr.innerHTML = `
       <td>${index + 1}</td>
-      <td><select data-index="${index}" data-field="note">${naturalNoteOptions(item.note)}</select></td>
+      <td><select data-index="${index}" data-field="note">${noteOptions(item.note)}</select></td>
       <td><input data-index="${index}" data-field="duration" type="number" min="0.1" step="0.05" value="${item.duration}"></td>
       <td>${harmony === 'Sin regla' ? harmony : displayNote(harmony)}</td>
       <td class="${resultClass(item.result)}">${item.result || '-'}</td>
@@ -343,15 +425,35 @@ function updatePractice(freq) {
   $('centsDiff').textContent = cents === null ? '--' : `${cents > 0 ? '+' : ''}${cents.toFixed(0)} cents`;
 
   let status = '--';
+  let cue = 'Canta la segunda voz y observa la aguja.';
   if (cents !== null) {
-    if (Math.abs(cents) <= 20) status = 'Afinado';
-    else if (cents < 0) status = 'Estás bajo';
-    else status = 'Estás alto';
+    if (Math.abs(cents) <= 20) {
+      status = 'Afinado';
+      cue = 'Mantén la nota: estás en el centro.';
+    } else if (cents < 0) {
+      status = 'Estás bajo';
+      cue = 'Sube un poco la voz hasta acercar la aguja al centro.';
+    } else {
+      status = 'Estás alto';
+      cue = 'Baja un poco la voz hasta acercar la aguja al centro.';
+    }
     state.melody[index].result = status;
     const left = Math.max(0, Math.min(100, 50 + cents));
     $('tunerNeedle').style.left = `${left}%`;
   }
   $('tuningStatus').textContent = status;
+  $('tuningCue').textContent = cue;
+}
+
+function resetPracticeReadout() {
+  $('targetNote').textContent = '--';
+  $('targetFreq').textContent = '-- Hz';
+  $('practiceNote').textContent = '--';
+  $('practiceFreq').textContent = '-- Hz';
+  $('centsDiff').textContent = '--';
+  $('tuningStatus').textContent = '--';
+  $('tuningCue').textContent = 'Pulsa practicar, canta la segunda voz y lleva la aguja al centro.';
+  $('tunerNeedle').style.left = '50%';
 }
 
 function beginPlaybackVisualization(type) {
@@ -377,49 +479,75 @@ function animatePlaybackVisualization() {
 }
 
 function createVoiceTone(ctx, destination, frequency, start, duration) {
-  const release = Math.min(0.16, duration * 0.35);
-  const attack = Math.min(0.05, Math.max(0.02, duration * 0.18));
-  const decayEnd = start + Math.min(duration * 0.45, attack + 0.12);
+  const release = Math.min(0.22, duration * 0.4);
+  const attack = Math.min(0.08, Math.max(0.025, duration * 0.2));
+  const decayEnd = start + Math.min(duration * 0.5, attack + 0.18);
   const stopAt = start + duration + release + 0.04;
 
   const noteGain = ctx.createGain();
-  const highpass = ctx.createBiquadFilter();
-  const lowpass = ctx.createBiquadFilter();
+  const toneGain = ctx.createGain();
+  const breathGain = ctx.createGain();
+  const formantA = ctx.createBiquadFilter();
+  const formantE = ctx.createBiquadFilter();
+  const formantNasal = ctx.createBiquadFilter();
+  const warmth = ctx.createBiquadFilter();
   const compressor = ctx.createDynamicsCompressor();
 
-  highpass.type = 'highpass';
-  highpass.frequency.setValueAtTime(110, start);
-  lowpass.type = 'lowpass';
-  lowpass.frequency.setValueAtTime(2600, start);
-  lowpass.Q.value = 0.7;
+  toneGain.gain.value = 0.72;
+  breathGain.gain.setValueAtTime(0.0001, start);
+  breathGain.gain.linearRampToValueAtTime(0.018, start + attack);
+  breathGain.gain.linearRampToValueAtTime(0.01, decayEnd);
+  breathGain.gain.exponentialRampToValueAtTime(0.0001, start + duration + release);
+
+  formantA.type = 'bandpass';
+  formantA.frequency.setValueAtTime(780, start);
+  formantA.Q.value = 4.8;
+  formantE.type = 'bandpass';
+  formantE.frequency.setValueAtTime(1180, start);
+  formantE.Q.value = 6.2;
+  formantNasal.type = 'bandpass';
+  formantNasal.frequency.setValueAtTime(2450, start);
+  formantNasal.Q.value = 7.5;
+  warmth.type = 'lowpass';
+  warmth.frequency.setValueAtTime(3400, start);
+  warmth.Q.value = 0.65;
+
   compressor.threshold.value = -24;
   compressor.knee.value = 18;
-  compressor.ratio.value = 3;
-  compressor.attack.value = 0.003;
-  compressor.release.value = 0.12;
+  compressor.ratio.value = 2.4;
+  compressor.attack.value = 0.006;
+  compressor.release.value = 0.18;
 
-  noteGain.connect(highpass);
-  highpass.connect(lowpass);
-  lowpass.connect(compressor);
+  noteGain.connect(toneGain);
+  toneGain.connect(formantA);
+  toneGain.connect(formantE);
+  toneGain.connect(formantNasal);
+  formantA.connect(warmth);
+  formantE.connect(warmth);
+  formantNasal.connect(warmth);
+  breathGain.connect(warmth);
+  warmth.connect(compressor);
   compressor.connect(destination);
 
   noteGain.gain.setValueAtTime(0.0001, start);
-  noteGain.gain.linearRampToValueAtTime(0.2, start + attack);
-  noteGain.gain.linearRampToValueAtTime(0.14, decayEnd);
-  noteGain.gain.setValueAtTime(0.14, start + duration);
+  noteGain.gain.linearRampToValueAtTime(0.26, start + attack);
+  noteGain.gain.linearRampToValueAtTime(0.18, decayEnd);
+  noteGain.gain.setValueAtTime(0.18, start + duration);
   noteGain.gain.exponentialRampToValueAtTime(0.0001, start + duration + release);
 
   const vibratoOsc = ctx.createOscillator();
   const vibratoGain = ctx.createGain();
   vibratoOsc.type = 'sine';
-  vibratoOsc.frequency.setValueAtTime(5.4, start);
-  vibratoGain.gain.setValueAtTime(8, start);
+  vibratoOsc.frequency.setValueAtTime(5.1, start);
+  vibratoGain.gain.setValueAtTime(0, start);
+  vibratoGain.gain.linearRampToValueAtTime(3.5, start + Math.min(0.35, duration * 0.55));
   vibratoOsc.connect(vibratoGain);
 
   const voices = [
-    { type: 'triangle', gain: 0.11, detune: 0, ratio: 1 },
-    { type: 'sine', gain: 0.06, detune: -4, ratio: 1 },
-    { type: 'sine', gain: 0.024, detune: 2, ratio: 2 }
+    { type: 'sawtooth', gain: 0.075, detune: -3, ratio: 1 },
+    { type: 'triangle', gain: 0.14, detune: 0, ratio: 1 },
+    { type: 'sine', gain: 0.05, detune: 4, ratio: 1 },
+    { type: 'sine', gain: 0.018, detune: 0, ratio: 2 }
   ];
 
   const oscillators = voices.map(spec => {
@@ -436,9 +564,22 @@ function createVoiceTone(ctx, destination, frequency, start, duration) {
     return osc;
   });
 
+  const noiseSize = Math.max(1, Math.floor(ctx.sampleRate * Math.min(duration + release, 2.5)));
+  const noiseBuffer = ctx.createBuffer(1, noiseSize, ctx.sampleRate);
+  const noiseData = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < noiseSize; i++) noiseData[i] = (Math.random() * 2 - 1) * 0.35;
+  const noise = ctx.createBufferSource();
+  const breathFilter = ctx.createBiquadFilter();
+  breathFilter.type = 'highpass';
+  breathFilter.frequency.setValueAtTime(1600, start);
+  noise.buffer = noiseBuffer;
+  noise.connect(breathFilter).connect(breathGain);
+  noise.start(start);
+  noise.stop(stopAt);
+
   vibratoOsc.start(start);
   vibratoOsc.stop(stopAt);
-  return { oscillators, vibratoOsc };
+  return { oscillators, vibratoOsc, noise };
 }
 
 async function playMelody(type) {
@@ -472,16 +613,26 @@ async function playMelody(type) {
 
 async function startPractice() {
   if (!state.melody.length) return;
-  await ensureAudio();
-  state.practicing = true;
-  state.practiceStart = performance.now();
-  state.practiceTrace = [];
-  state.currentPracticeIndex = 0;
-  state.melody.forEach(m => m.result = '-');
-  $('startPractice').disabled = true;
-  $('stopPractice').disabled = false;
-  if (!state.raf) updateLivePitch();
-  renderMelody();
+  try {
+    $('startPractice').disabled = true;
+    await ensureAudio();
+    resetPracticeReadout();
+    state.practicing = true;
+    state.practiceStart = performance.now();
+    state.practiceTrace = [];
+    state.currentPracticeIndex = 0;
+    state.melody.forEach(m => m.result = '-');
+    $('stopPractice').disabled = false;
+    if (!state.raf) updateLivePitch();
+    renderMelody();
+  } catch (error) {
+    console.error(error);
+    state.practicing = false;
+    $('micStatus').textContent = 'Micrófono bloqueado';
+    $('startPractice').disabled = false;
+    $('stopPractice').disabled = true;
+    setMicHint(describeMicError(error), 'error');
+  }
 }
 
 function stopPractice() {
@@ -489,6 +640,7 @@ function stopPractice() {
   state.currentPracticeIndex = -1;
   $('startPractice').disabled = false;
   $('stopPractice').disabled = true;
+  resetPracticeReadout();
   renderMelody();
 }
 
@@ -507,7 +659,6 @@ function getSongData() {
   return {
     title: $('songTitle').value,
     voiceMode: $('voiceMode').value,
-    quantizeMode: $('quantizeMode').value,
     melody: state.melody.map(({ note, duration }) => ({ note, duration }))
   };
 }
@@ -515,7 +666,6 @@ function getSongData() {
 function setSongData(data) {
   $('songTitle').value = data.title || 'Ejercicio norteño';
   $('voiceMode').value = data.voiceMode || 'low';
-  $('quantizeMode').value = data.quantizeMode || 'natural';
   state.melody = Array.isArray(data.melody) ? data.melody.map(m => ({ ...m, result: '-' })) : [];
   state.practiceTrace = [];
   state.currentPracticeIndex = -1;
@@ -674,15 +824,33 @@ function renderTimelineChart() {
 }
 
 function bindEvents() {
+  $('refreshMics').addEventListener('click', async () => {
+    try {
+      await refreshMicDevices();
+    } catch (error) {
+      console.error(error);
+      setMicHint(describeMicError(error), 'error');
+    }
+  });
+
   $('startRecording').addEventListener('click', async () => {
-    await ensureAudio();
-    state.recordedFrames = [];
-    state.recordingSegments = [];
-    state.activeRecordingSegment = null;
-    state.recording = true;
-    $('startRecording').disabled = true;
-    $('stopRecording').disabled = false;
-    if (!state.raf) updateLivePitch();
+    try {
+      $('startRecording').disabled = true;
+      await ensureAudio();
+      state.recordedFrames = [];
+      state.recordingSegments = [];
+      state.activeRecordingSegment = null;
+      state.recording = true;
+      $('stopRecording').disabled = false;
+      if (!state.raf) updateLivePitch();
+    } catch (error) {
+      console.error(error);
+      state.recording = false;
+      $('micStatus').textContent = 'Micrófono bloqueado';
+      $('startRecording').disabled = false;
+      $('stopRecording').disabled = true;
+      setMicHint(describeMicError(error), 'error');
+    }
   });
 
   $('stopRecording').addEventListener('click', () => {
@@ -736,4 +904,7 @@ function bindEvents() {
 }
 
 bindEvents();
+refreshMicDevices().catch(() => {
+  setMicHint('Pulsa Actualizar o Iniciar grabación para comprobar el micrófono.', '');
+});
 renderMelody();

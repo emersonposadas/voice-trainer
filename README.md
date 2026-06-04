@@ -10,12 +10,13 @@ Aplicación web estática para entrenar segunda voz estilo norteño.
 
 - Grabación de melodía principal cantando o tarareando.
 - Detección básica de pitch desde el micrófono del navegador.
+- Sostenidos permitidos por defecto en grabación y edición.
 - Procesamiento de melodía: agrupación de notas y eliminación de fragmentos muy cortos.
 - Regla fija de segunda voz norteña en modo agudo o grave.
 - Ejemplo: `D4` en modo grave produce `A#3`.
 - Línea de tiempo editable.
 - Reproducción de primera voz y segunda voz generada.
-- Práctica con micrófono y medidor visual de afinación.
+- Práctica con micrófono, línea de tiempo y medidor visual de afinación.
 - Guardado local en el navegador.
 - Importación/exportación de canciones en JSON.
 - Compatible con GitHub Pages.
@@ -80,3 +81,9 @@ La detección de pitch usa autocorrelación simple. Es suficiente para una prime
 - La referencia reproducida ahora usa un sintetizador más claro y estable para que sirva mejor como guía vocal.
 - Se añadió una línea de tiempo visual tipo gráfico: amarillo = segunda voz, azul = melodía principal, blanco = tu voz.
 - Durante la práctica aparece un cursor vertical para seguir mejor el avance de la frase.
+
+## Ajustes de práctica (2026-06-04)
+
+- Los sostenidos quedan activos por defecto y ya no requieren configuración en la interfaz.
+- La referencia de audio usa una mezcla con formantes, vibrato gradual y un poco de aire para sonar menos sintética.
+- La cabecera se simplificó y el medidor de afinación ahora indica si conviene subir, bajar o mantener la nota.

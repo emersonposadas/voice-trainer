@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">Entrenador de segunda voz</p>
         <h1>Norteño Voice Trainer</h1>
-        <p class="subtitle">Graba o tararea la melodía principal, genera la segunda voz aguda o grave con tu regla norteña, y practica siguiendo una referencia visual dibujada.</p>
+        <p class="subtitle">Graba la primera voz, escucha la segunda y practícala con guía visual.</p>
       </div>
       <div class="status-card">
         <span id="micStatus" class="pill">Micrófono no iniciado</span>
@@ -33,12 +33,6 @@
             <option value="high">Aguda</option>
           </select>
         </label>
-        <label>Redondeo de melodía principal
-          <select id="quantizeMode">
-            <option value="natural">Solo notas naturales</option>
-            <option value="chromatic">Permitir sostenidos</option>
-          </select>
-        </label>
       </div>
       <div>
         <h2>2. Grabar melodía</h2>
@@ -48,6 +42,15 @@
           <button id="stopRecording" disabled>Detener y procesar</button>
           <button id="clearMelody" class="secondary">Limpiar</button>
         </div>
+        <div class="mic-tools">
+          <label>Micrófono
+            <select id="micDevice">
+              <option value="">Dispositivo predeterminado</option>
+            </select>
+          </label>
+          <button id="refreshMics" class="secondary" type="button">Actualizar</button>
+        </div>
+        <p id="micHint" class="mic-hint">Para grabar, permite el micrófono cuando el navegador lo pida.</p>
         <div class="meter">
           <div id="volumeBar"></div>
         </div>
@@ -105,6 +108,7 @@
 
     <section class="panel practice-panel">
       <h2>4. Afinación en práctica</h2>
+      <p id="tuningCue" class="practice-cue">Pulsa practicar, canta la segunda voz y lleva la aguja al centro.</p>
       <div class="practice-grid">
         <div>
           <span class="label">Objetivo actual</span>
@@ -123,10 +127,18 @@
         </div>
       </div>
       <div class="tuner">
+        <div class="tuner-help">
+          <span>Bajo: sube</span>
+          <span class="center">Afinado</span>
+          <span>Alto: baja</span>
+        </div>
         <div class="tuner-scale">
           <span>-50c</span><span>-25c</span><span>0</span><span>+25c</span><span>+50c</span>
         </div>
-        <div class="tuner-track"><div id="tunerNeedle"></div></div>
+        <div class="tuner-track">
+          <span class="tuner-center"></span>
+          <div id="tunerNeedle"></div>
+        </div>
       </div>
     </section>
   </main>
