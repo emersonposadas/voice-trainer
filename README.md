@@ -68,7 +68,7 @@ https://TU-USUARIO.github.io/voice-trainer/
 
 ## Nota técnica
 
-La detección de pitch usa un detector local inspirado en McLeod Pitch Method sobre Web Audio. Para una versión más avanzada puede evaluarse una librería como Pitchy, aubio.js o Essentia.js.
+La detección en vivo usa un pipeline local en el navegador: `TEN VAD` en WebAssembly filtra frames con voz humana y `aubiojs` con el método `yinfft` estima el pitch. Si TEN VAD o aubiojs no están disponibles, la app vuelve automáticamente a una puerta RMS y al detector local inspirado en McLeod Pitch Method.
 
 ## Corrección 2026-06-03
 

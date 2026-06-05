@@ -6,6 +6,21 @@ const semitoneToNote = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A
 const naturalNotes = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
 const solfege = { C: 'DO', 'C#': 'DO#', D: 'RE', 'D#': 'RE#', E: 'MI', F: 'FA', 'F#': 'FA#', G: 'SOL', 'G#': 'SOL#', A: 'LA', 'A#': 'LA#', B: 'SI' };
 const songStorageKey = 'voiceTrainerSong';
+const pitchConfig = {
+  bufferSize: 2048,
+  minFrequency: 70,
+  maxFrequency: 1000,
+  minRms: 0.012
+};
+const vadConfig = {
+  sampleRate: 16000,
+  hopSize: 256,
+  voiceThreshold: 0.5,
+  minVoiceProbability: 0.45,
+  moduleUrl: 'https://cdn.jsdelivr.net/npm/ten-vad-lib@1.0.0/dist/index.esm.js',
+  wasmPath: 'https://cdn.jsdelivr.net/npm/ten-vad-lib@1.0.0/wasm/ten_vad.wasm',
+  jsPath: 'https://cdn.jsdelivr.net/npm/ten-vad-lib@1.0.0/wasm/ten_vad.js'
+};
 const voiceRules = {
   C: { high: 'E', low: 'G#' },
   D: { high: 'F#', low: 'A#' },
@@ -36,6 +51,26 @@ const state = {
   practiceTrace: [],
   currentPracticeIndex: -1,
   pitchBuffer: [],
+  pitchEngine: {
+    backend: 'local',
+    aubioPromise: null,
+    aubioPitch: null,
+    aubioSampleRate: null,
+    aubioBufferSize: null,
+    failure: null
+  },
+  vadEngine: {
+    backend: 'rms',
+    loaderPromise: null,
+    moduleApi: null,
+    wasmModule: null,
+    instance: null,
+    inputSampleRate: null,
+    frameBuffer: [],
+    speaking: true,
+    probability: 1,
+    failure: null
+  },
   raf: null,
   playback: { active: false, start: 0, duration: 0, type: null },
   playbackRaf: null
@@ -207,11 +242,110 @@ async function ensureAudio() {
 
   const source = state.audioContext.createMediaStreamSource(state.stream);
   state.analyser = state.audioContext.createAnalyser();
-  state.analyser.fftSize = 2048;
+  state.analyser.fftSize = pitchConfig.bufferSize;
   source.connect(state.analyser);
+  await Promise.all([ensurePitchEngine(), ensureVadEngine()]);
   $('micStatus').textContent = 'Micrófono activo';
   await refreshMicDevices();
-  setMicHint('Micrófono activo. Canta o tararea: la barra de volumen debe moverse.', 'ok');
+  const pitchBackend = state.pitchEngine.backend === 'aubio' ? 'aubio yinfft' : 'detector local';
+  const vadBackend = state.vadEngine.backend === 'ten' ? 'TEN VAD' : 'RMS';
+  setMicHint(`Micrófono activo. Voz: ${vadBackend}. Pitch: ${pitchBackend}.`, 'ok');
+}
+
+async function ensurePitchEngine() {
+  if (!state.audioContext || !state.analyser) return false;
+
+  const sampleRate = state.audioContext.sampleRate;
+  const bufferSize = state.analyser.fftSize;
+
+  if (
+    state.pitchEngine.aubioPitch &&
+    state.pitchEngine.aubioSampleRate === sampleRate &&
+    state.pitchEngine.aubioBufferSize === bufferSize
+  ) {
+    state.pitchEngine.backend = 'aubio';
+    return true;
+  }
+
+  if (typeof window.aubio !== 'function') {
+    state.pitchEngine.backend = 'local';
+    state.pitchEngine.failure = 'aubiojs no esta cargado';
+    return false;
+  }
+
+  if (!state.pitchEngine.aubioPromise) {
+    state.pitchEngine.aubioPromise = window.aubio()
+      .then(({ Pitch }) => {
+        state.pitchEngine.aubioPitch = new Pitch('yinfft', bufferSize, bufferSize, sampleRate);
+        state.pitchEngine.aubioSampleRate = sampleRate;
+        state.pitchEngine.aubioBufferSize = bufferSize;
+        state.pitchEngine.backend = 'aubio';
+        state.pitchEngine.failure = null;
+        return true;
+      })
+      .catch((error) => {
+        console.warn('No se pudo iniciar aubiojs, usando detector local:', error);
+        state.pitchEngine.backend = 'local';
+        state.pitchEngine.aubioPitch = null;
+        state.pitchEngine.failure = error?.message || 'aubiojs no disponible';
+        return false;
+      })
+      .finally(() => {
+        state.pitchEngine.aubioPromise = null;
+      });
+  }
+
+  return state.pitchEngine.aubioPromise;
+}
+
+async function ensureVadEngine() {
+  if (!state.audioContext) return false;
+
+  if (state.vadEngine.instance && state.vadEngine.inputSampleRate === state.audioContext.sampleRate) {
+    state.vadEngine.backend = 'ten';
+    return true;
+  }
+
+  if (!state.vadEngine.loaderPromise) {
+    state.vadEngine.loaderPromise = import(vadConfig.moduleUrl)
+      .then(async (api) => {
+        const module = await api.VADModuleLoader.getInstance().loadModule({
+          wasmPath: vadConfig.wasmPath,
+          jsPath: vadConfig.jsPath
+        });
+        state.vadEngine.instance?.destroy();
+        state.vadEngine.moduleApi = api;
+        state.vadEngine.wasmModule = module;
+        state.vadEngine.instance = new api.VADInstance(module, vadConfig.hopSize, vadConfig.voiceThreshold);
+        state.vadEngine.inputSampleRate = state.audioContext.sampleRate;
+        state.vadEngine.backend = 'ten';
+        state.vadEngine.failure = null;
+        resetVadState();
+        return true;
+      })
+      .catch((error) => {
+        console.warn('No se pudo iniciar TEN VAD, usando puerta RMS:', error);
+        state.vadEngine.backend = 'rms';
+        state.vadEngine.failure = error?.message || 'TEN VAD no disponible';
+        return false;
+      })
+      .finally(() => {
+        state.vadEngine.loaderPromise = null;
+      });
+  }
+
+  return state.vadEngine.loaderPromise;
+}
+
+function resetVadState() {
+  state.vadEngine.frameBuffer = [];
+  state.vadEngine.speaking = true;
+  state.vadEngine.probability = 1;
+  try {
+    state.vadEngine.instance?.reset();
+  } catch (error) {
+    console.warn('No se pudo reiniciar TEN VAD:', error);
+  }
 }
 
 function median(values) {
@@ -244,11 +378,9 @@ function parabolicPeak(values, index) {
 }
 
 function detectPitchMpm(buffer, sampleRate) {
-  const minFrequency = 70;
-  const maxFrequency = 1000;
   const cutoff = 0.9;
-  const minPeriod = Math.floor(sampleRate / maxFrequency);
-  const maxPeriod = Math.min(Math.floor(sampleRate / minFrequency), Math.floor(buffer.length / 2));
+  const minPeriod = Math.floor(sampleRate / pitchConfig.maxFrequency);
+  const maxPeriod = Math.min(Math.floor(sampleRate / pitchConfig.minFrequency), Math.floor(buffer.length / 2));
   const nsdf = new Float32Array(maxPeriod + 1);
 
   let mean = 0;
@@ -291,7 +423,73 @@ function detectPitchMpm(buffer, sampleRate) {
   return sampleRate / refinedPeriod;
 }
 
-function detectPitch(analyser, audioContext) {
+function detectPitchAubio(buffer) {
+  const pitch = state.pitchEngine.aubioPitch?.do(buffer);
+  if (!Number.isFinite(pitch) || pitch < pitchConfig.minFrequency || pitch > pitchConfig.maxFrequency) {
+    return null;
+  }
+  return pitch;
+}
+
+function downsampleToVadFrameData(buffer, sampleRate) {
+  if (sampleRate === vadConfig.sampleRate) {
+    const samples = new Int16Array(buffer.length);
+    for (let i = 0; i < buffer.length; i++) {
+      const clamped = Math.max(-1, Math.min(1, buffer[i]));
+      samples[i] = Math.round(clamped * 32767);
+    }
+    return samples;
+  }
+
+  const ratio = sampleRate / vadConfig.sampleRate;
+  const outputLength = Math.max(1, Math.floor(buffer.length / ratio));
+  const samples = new Int16Array(outputLength);
+
+  for (let i = 0; i < outputLength; i++) {
+    const sourceIndex = i * ratio;
+    const leftIndex = Math.floor(sourceIndex);
+    const rightIndex = Math.min(buffer.length - 1, leftIndex + 1);
+    const mix = sourceIndex - leftIndex;
+    const sample = (buffer[leftIndex] * (1 - mix)) + (buffer[rightIndex] * mix);
+    const clamped = Math.max(-1, Math.min(1, sample));
+    samples[i] = Math.round(clamped * 32767);
+  }
+
+  return samples;
+}
+
+async function detectVoiceActivity(buffer, rms, sampleRate) {
+  if (state.vadEngine.backend !== 'ten' || !state.vadEngine.instance) {
+    state.vadEngine.speaking = rms >= pitchConfig.minRms;
+    state.vadEngine.probability = state.vadEngine.speaking ? 1 : 0;
+    return state.vadEngine.speaking;
+  }
+
+  const vadSamples = downsampleToVadFrameData(buffer, sampleRate);
+  for (const sample of vadSamples) state.vadEngine.frameBuffer.push(sample);
+
+  let processedFrames = 0;
+  let strongestProbability = 0;
+  let voiceDetected = false;
+
+  while (state.vadEngine.frameBuffer.length >= vadConfig.hopSize) {
+    const frame = Int16Array.from(state.vadEngine.frameBuffer.slice(0, vadConfig.hopSize));
+    state.vadEngine.frameBuffer = state.vadEngine.frameBuffer.slice(vadConfig.hopSize);
+    const result = await state.vadEngine.instance.processFrame(frame);
+    processedFrames++;
+    strongestProbability = Math.max(strongestProbability, result.probability || 0);
+    voiceDetected = voiceDetected || result.isVoice || result.probability >= vadConfig.minVoiceProbability;
+  }
+
+  if (processedFrames > 0) {
+    state.vadEngine.probability = strongestProbability;
+    state.vadEngine.speaking = voiceDetected;
+  }
+
+  return state.vadEngine.speaking;
+}
+
+async function detectPitch(analyser, audioContext) {
   const buffer = new Float32Array(analyser.fftSize);
   analyser.getFloatTimeDomainData(buffer);
 
@@ -299,15 +497,18 @@ function detectPitch(analyser, audioContext) {
   for (const sample of buffer) rms += sample * sample;
   rms = Math.sqrt(rms / buffer.length);
   $('volumeBar').style.width = `${Math.min(100, rms * 700)}%`;
-  if (rms < 0.015) return { freq: null, rms };
+  if (rms < pitchConfig.minRms) return { freq: null, rms };
+  if (!await detectVoiceActivity(buffer, rms, audioContext.sampleRate)) return { freq: null, rms };
 
-  const freq = detectPitchMpm(buffer, audioContext.sampleRate);
+  const freq = state.pitchEngine.backend === 'aubio'
+    ? detectPitchAubio(buffer)
+    : detectPitchMpm(buffer, audioContext.sampleRate);
   return { freq: smoothPitch(freq), rms };
 }
 
-function updateLivePitch() {
+async function updateLivePitch() {
   if (!state.analyser || !state.audioContext) return;
-  const { freq } = detectPitch(state.analyser, state.audioContext);
+  const { freq } = await detectPitch(state.analyser, state.audioContext);
   const note = frequencyToNote(freq, 'chromatic');
   $('liveFreq').textContent = freq ? `${freq.toFixed(1)} Hz` : '-- Hz';
   $('liveNote').textContent = note ? displayNote(note) : '--';
@@ -656,6 +857,7 @@ async function startPractice() {
     $('startPractice').disabled = true;
     await ensureAudio();
     state.pitchBuffer = [];
+    resetVadState();
     resetPracticeReadout();
     state.practicing = true;
     state.practiceStart = performance.now();
@@ -888,6 +1090,7 @@ function bindEvents() {
       $('startRecording').disabled = true;
       await ensureAudio();
       state.pitchBuffer = [];
+      resetVadState();
       state.recordedFrames = [];
       state.recordingSegments = [];
       state.activeRecordingSegment = null;
